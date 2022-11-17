@@ -1,0 +1,40 @@
+From 478e9eb3ca32ec3e4cc9611a0af7744fd6a958f3 Mon Sep 17 00:00:00 2001
+From: Michael Catanzaro <mcatanzaro@redhat.com>
+Date: Fri, 21 Oct 2022 10:23:01 -0500
+Subject: [PATCH] network: fix crashes in eap-method-simple
+
+When the stored password is missing, we will crash passing NULL to a
+non-nullable GTK API function.
+
+Fixes #1905
+---
+ panels/network/wireless-security/eap-method-simple.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/panels/network/wireless-security/eap-method-simple.c b/panels/network/wireless-security/eap-method-simple.c
+index 3dda8df28..7bb29ec9c 100644
+--- a/panels/network/wireless-security/eap-method-simple.c
++++ b/panels/network/wireless-security/eap-method-simple.c
+@@ -200,7 +200,8 @@ static void
+ set_username (EAPMethod *method, const gchar *username)
+ {
+ 	EAPMethodSimple *self = EAP_METHOD_SIMPLE (method);
+-	gtk_editable_set_text (GTK_EDITABLE (self->username_entry), username);
++	if (username)
++		gtk_editable_set_text (GTK_EDITABLE (self->username_entry), username);
+ }
+ 
+ static const gchar *
+@@ -214,7 +215,8 @@ static void
+ set_password (EAPMethod *method, const gchar *password)
+ {
+ 	EAPMethodSimple *self = EAP_METHOD_SIMPLE (method);
+-	gtk_editable_set_text (GTK_EDITABLE (self->password_entry), password);
++	if (password)
++		gtk_editable_set_text (GTK_EDITABLE (self->password_entry), password);
+ }
+ 
+ static gboolean
+-- 
+GitLab
+

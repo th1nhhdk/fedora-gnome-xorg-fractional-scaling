@@ -1,0 +1,323 @@
+From bced840891de07f070f14c9fdab8729603835a1b Mon Sep 17 00:00:00 2001
+From: Sebastian Wick <sebastian.wick@redhat.com>
+Date: Fri, 16 Sep 2022 15:43:46 +0200
+Subject: [PATCH 1/5] color-device: Always become ready no matter if we
+ succeeded or not
+
+Part-of: <https://gitlab.gnome.org/GNOME/mutter/-/merge_requests/2627>
+(cherry picked from commit ed554615f80ab48a8ca904cc3367c64877e2acb6)
+---
+ src/backends/meta-color-device.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/backends/meta-color-device.c b/src/backends/meta-color-device.c
+index 519097ff37..2652737cbb 100644
+--- a/src/backends/meta-color-device.c
++++ b/src/backends/meta-color-device.c
+@@ -342,7 +342,7 @@ static void
+ meta_color_device_notify_ready (MetaColorDevice *color_device,
+                                 gboolean         success)
+ {
+-  color_device->is_ready = success;
++  color_device->is_ready = TRUE;
+   g_signal_emit (color_device, signals[READY], 0, success);
+ }
+ 
+-- 
+2.38.1
+
+
+From 8691fca5029f4d55ffa3e14e2a6d877cdc31265d Mon Sep 17 00:00:00 2001
+From: Sebastian Wick <sebastian.wick@redhat.com>
+Date: Fri, 16 Sep 2022 15:48:17 +0200
+Subject: [PATCH 2/5] color-device: Return early if the deivce becomes ready
+ due to an error
+
+Part-of: <https://gitlab.gnome.org/GNOME/mutter/-/merge_requests/2627>
+(cherry picked from commit 2476a8cedd5b0b0652a2947437b6bc3aacf411f0)
+---
+ src/backends/meta-color-device.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/src/backends/meta-color-device.c b/src/backends/meta-color-device.c
+index 2652737cbb..53b5865486 100644
+--- a/src/backends/meta-color-device.c
++++ b/src/backends/meta-color-device.c
+@@ -378,6 +378,7 @@ on_cd_device_connected (GObject      *source_object,
+ 
+       g_cancellable_cancel (color_device->cancellable);
+       meta_color_device_notify_ready (color_device, FALSE);
++      return;
+     }
+   else
+     {
+@@ -434,6 +435,7 @@ ensure_device_profile_cb (GObject      *source_object,
+ 
+       g_cancellable_cancel (color_device->cancellable);
+       meta_color_device_notify_ready (color_device, FALSE);
++      return;
+     }
+ 
+   meta_topic (META_DEBUG_COLOR, "Color device '%s' generated",
+-- 
+2.38.1
+
+
+From 0dbfb7e39f878afa2d0396eee63ffc5213df2e30 Mon Sep 17 00:00:00 2001
+From: Sebastian Wick <sebastian.wick@redhat.com>
+Date: Fri, 16 Sep 2022 01:33:25 +0200
+Subject: [PATCH 3/5] color-device: Don't create profiles from obvious garbage
+ data
+
+This just checks for any chromaticity being zero and gamma being in
+range but we could do a better job at detecting bad data in the future.
+
+Also check the return value of cmsCreateRGBProfileTHR which can be NULL.
+
+Fixes gnome-shell#5875
+
+Part-of: <https://gitlab.gnome.org/GNOME/mutter/-/merge_requests/2627>
+(cherry picked from commit a8259240ae3009fd3cd7df4deccefb105b37ba6e)
+---
+ src/backends/meta-color-device.c | 38 ++++++++++++++++++++++++++++++--
+ 1 file changed, 36 insertions(+), 2 deletions(-)
+
+diff --git a/src/backends/meta-color-device.c b/src/backends/meta-color-device.c
+index 53b5865486..8676cb27c2 100644
+--- a/src/backends/meta-color-device.c
++++ b/src/backends/meta-color-device.c
+@@ -817,6 +817,31 @@ create_icc_profile_from_edid (MetaColorDevice     *color_device,
+   g_autofree char *vendor_name = NULL;
+   cmsHPROFILE lcms_profile;
+ 
++  if (G_APPROX_VALUE (edid_info->red_x, 0.0, FLT_EPSILON) ||
++      G_APPROX_VALUE (edid_info->red_y, 0.0, FLT_EPSILON) ||
++      G_APPROX_VALUE (edid_info->green_x, 0.0, FLT_EPSILON) ||
++      G_APPROX_VALUE (edid_info->green_y, 0.0, FLT_EPSILON) ||
++      G_APPROX_VALUE (edid_info->blue_x, 0.0, FLT_EPSILON) ||
++      G_APPROX_VALUE (edid_info->blue_y, 0.0, FLT_EPSILON) ||
++      G_APPROX_VALUE (edid_info->white_x, 0.0, FLT_EPSILON) ||
++      G_APPROX_VALUE (edid_info->white_y, 0.0, FLT_EPSILON))
++    {
++      g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
++                   "EDID for %s contains bogus Color Characteristics",
++                   meta_color_device_get_id (color_device));
++      return NULL;
++    }
++
++  if (edid_info->gamma + FLT_EPSILON < 1.0 ||
++      edid_info->gamma > 4.0)
++    {
++      g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
++                   "EDID for %s contains bogus Display Transfer "
++                   "Characteristics (GAMMA)",
++                   meta_color_device_get_id (color_device));
++      return NULL;
++    }
++
+   cd_icc = cd_icc_new ();
+ 
+   chroma.Red.x = edid_info->red_x;
+@@ -839,11 +864,20 @@ create_icc_profile_from_edid (MetaColorDevice     *color_device,
+                                          &white_point,
+                                          &chroma,
+                                          transfer_curve);
+-  cmsSetHeaderRenderingIntent (lcms_profile, INTENT_PERCEPTUAL);
+-  cmsSetDeviceClass (lcms_profile, cmsSigDisplayClass);
+ 
+   cmsFreeToneCurve (transfer_curve[0]);
+ 
++  if (!lcms_profile)
++    {
++      g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
++                   "cmsCreateRGBProfileTHR for %s failed",
++                   meta_color_device_get_id (color_device));
++      return NULL;
++    }
++
++  cmsSetHeaderRenderingIntent (lcms_profile, INTENT_PERCEPTUAL);
++  cmsSetDeviceClass (lcms_profile, cmsSigDisplayClass);
++
+   if (!cd_icc_load_handle (cd_icc, lcms_profile,
+                            CD_ICC_LOAD_FLAGS_PRIMARIES, error))
+     {
+-- 
+2.38.1
+
+
+From 686fe92478276d975b2d5dc1a8ba78a176002fce Mon Sep 17 00:00:00 2001
+From: Sebastian Wick <sebastian.wick@redhat.com>
+Date: Mon, 19 Sep 2022 19:31:37 +0200
+Subject: [PATCH 4/5] color-device: Clear pending flags always when finished
+
+Even if the task was cancelled or an error occured.
+
+Part-of: <https://gitlab.gnome.org/GNOME/mutter/-/merge_requests/2627>
+(cherry picked from commit 19837796fe39b7ab83a10721e0c9d8fb748437c4)
+---
+ src/backends/meta-color-device.c | 10 ++++++----
+ 1 file changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/src/backends/meta-color-device.c b/src/backends/meta-color-device.c
+index 8676cb27c2..a3b8700e62 100644
+--- a/src/backends/meta-color-device.c
++++ b/src/backends/meta-color-device.c
+@@ -367,6 +367,8 @@ on_cd_device_connected (GObject      *source_object,
+   MetaColorDevice *color_device = user_data;
+   g_autoptr (GError) error = NULL;
+ 
++  color_device->pending_state &= ~PENDING_CONNECTED;
++
+   if (!cd_device_connect_finish (cd_device, res, &error))
+     {
+       if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+@@ -386,8 +388,6 @@ on_cd_device_connected (GObject      *source_object,
+                   color_device->cd_device_id);
+     }
+ 
+-  color_device->pending_state &= ~PENDING_CONNECTED;
+-
+   g_signal_connect (cd_device, "changed",
+                     G_CALLBACK (on_cd_device_changed), color_device);
+   update_assigned_profile (color_device);
+@@ -400,6 +400,8 @@ on_profile_ready (MetaColorProfile *color_profile,
+                   gboolean          success,
+                   MetaColorDevice  *color_device)
+ {
++  color_device->pending_state &= ~PENDING_PROFILE_READY;
++
+   if (!success)
+     {
+       g_clear_object (&color_device->device_profile);
+@@ -408,7 +410,6 @@ on_profile_ready (MetaColorProfile *color_profile,
+       return;
+     }
+ 
+-  color_device->pending_state &= ~PENDING_PROFILE_READY;
+   maybe_finish_setup (color_device);
+ }
+ 
+@@ -422,6 +423,8 @@ ensure_device_profile_cb (GObject      *source_object,
+   MetaColorProfile *color_profile;
+   g_autoptr (GError) error = NULL;
+ 
++  color_device->pending_state &= ~PENDING_EDID_PROFILE;
++
+   color_profile = meta_color_store_ensure_device_profile_finish (color_store,
+                                                                  res,
+                                                                  &error);
+@@ -441,7 +444,6 @@ ensure_device_profile_cb (GObject      *source_object,
+   meta_topic (META_DEBUG_COLOR, "Color device '%s' generated",
+               color_device->cd_device_id);
+ 
+-  color_device->pending_state &= ~PENDING_EDID_PROFILE;
+   g_set_object (&color_device->device_profile, color_profile);
+ 
+   if (!meta_color_profile_is_ready (color_profile))
+-- 
+2.38.1
+
+
+From 3d724358195a1e627bd282de786d7c8dcf3a62c4 Mon Sep 17 00:00:00 2001
+From: Sebastian Wick <sebastian.wick@redhat.com>
+Date: Fri, 16 Sep 2022 16:01:26 +0200
+Subject: [PATCH 5/5] tests/color: Test EDIDs with bogus data
+
+Make sure the profile creation fails without crashing and that the
+device still becomes ready when we fail to create a profile.
+
+Part-of: <https://gitlab.gnome.org/GNOME/mutter/-/merge_requests/2627>
+(cherry picked from commit 88504b96d0d05e5da9a14243467cb2ca5cca2475)
+---
+ src/tests/color-management-tests.c | 68 ++++++++++++++++++++++++++++++
+ 1 file changed, 68 insertions(+)
+
+diff --git a/src/tests/color-management-tests.c b/src/tests/color-management-tests.c
+index c486fd2d68..932bb59088 100644
+--- a/src/tests/color-management-tests.c
++++ b/src/tests/color-management-tests.c
+@@ -589,6 +589,72 @@ meta_test_color_management_profile_device (void)
+   g_assert_cmpfloat_with_epsilon (white->Z, 1.10479736, PRIMARY_EPSILON);
+ }
+ 
++static void
++meta_test_color_management_profile_device_bogus (void)
++{
++  MetaBackend *backend = meta_context_get_backend (test_context);
++  MetaMonitorManager *monitor_manager =
++    meta_backend_get_monitor_manager (backend);
++  MetaMonitorManagerTest *monitor_manager_test =
++    META_MONITOR_MANAGER_TEST (monitor_manager);
++  MetaColorManager *color_manager =
++    meta_backend_get_color_manager (backend);
++  MetaEdidInfo edid_info;
++  MonitorTestCaseSetup test_case_setup = base_monitor_setup;
++  MetaMonitorTestSetup *test_setup;
++  MetaMonitor *monitor;
++  MetaColorDevice *color_device;
++  MetaColorProfile *color_profile;
++
++  edid_info = CALTECH_MONITOR_EDID;
++  /* Decoding gamma is in [1, 4] */
++  edid_info.gamma = 0.7;
++  test_case_setup.outputs[0].serial = "profile_device_bogus/gamma";
++  test_case_setup.outputs[0].edid_info = edid_info;
++  test_case_setup.outputs[0].has_edid_info = TRUE;
++  test_setup = meta_create_monitor_test_setup (backend, &test_case_setup,
++                                               MONITOR_TEST_FLAG_NO_STORED);
++  meta_monitor_manager_test_emulate_hotplug (monitor_manager_test, test_setup);
++
++  monitor = meta_monitor_manager_get_monitors (monitor_manager)->data;
++  color_device = meta_color_manager_get_color_device (color_manager, monitor);
++  g_assert_nonnull (color_device);
++
++  g_test_expect_message ("libmutter", G_LOG_LEVEL_WARNING,
++                         "Failed to create device color profile:*"
++                         "contains bogus Display Transfer Characteristics "
++                         "(GAMMA)");
++
++  while (!meta_color_device_is_ready (color_device))
++    g_main_context_iteration (NULL, TRUE);
++
++  color_profile = meta_color_device_get_device_profile (color_device);
++  g_assert_null (color_profile);
++
++  edid_info = CALTECH_MONITOR_EDID;
++  edid_info.green_y = 0.0;
++  test_case_setup.outputs[0].serial = "profile_device_bogus/chromaticity";
++  test_case_setup.outputs[0].edid_info = edid_info;
++  test_case_setup.outputs[0].has_edid_info = TRUE;
++  test_setup = meta_create_monitor_test_setup (backend, &test_case_setup,
++                                               MONITOR_TEST_FLAG_NO_STORED);
++  meta_monitor_manager_test_emulate_hotplug (monitor_manager_test, test_setup);
++
++  monitor = meta_monitor_manager_get_monitors (monitor_manager)->data;
++  color_device = meta_color_manager_get_color_device (color_manager, monitor);
++  g_assert_nonnull (color_device);
++
++  g_test_expect_message ("libmutter", G_LOG_LEVEL_WARNING,
++                         "Failed to create device color profile:*"
++                         "contains bogus Color Characteristics");
++
++  while (!meta_color_device_is_ready (color_device))
++    g_main_context_iteration (NULL, TRUE);
++
++  color_profile = meta_color_device_get_device_profile (color_device);
++  g_assert_null (color_profile);
++}
++
+ static void
+ meta_test_color_management_profile_system (void)
+ {
+@@ -1347,6 +1413,8 @@ init_tests (void)
+                   meta_test_color_management_device_no_gamma);
+   add_color_test ("/color-management/profile/device",
+                   meta_test_color_management_profile_device);
++  add_color_test ("/color-management/profile/device-bogus",
++                  meta_test_color_management_profile_device_bogus);
+   add_color_test ("/color-management/profile/system",
+                   meta_test_color_management_profile_system);
+   add_color_test ("/color-management/profile/efivar",
+-- 
+2.38.1
+

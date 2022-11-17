@@ -18,3 +18,10 @@ $ cd ../RPMS/
 # rpm --force -iv ./x86_64/mutter-43.0-4.fc37.x86_64.rpm ./noarch/gnome-control-center-filesystem-43.0-2.fc37.noarch.rpm ./x86_64/gnome-control-center-43.0-2.fc37.x86_64.rpm
 # echo "exclude=mutter gnome-control-center-filesystem gnome-control-center" >> /etc/dnf/dnf.conf
 ```
+
+## Using prebuilt binaries (Not Recommended)
+- Download mutter-43.0-4.fc37.x86_64.rpm, gnome-control-center-filesystem-43.0-2.fc37.noarch.rpm and gnome-control-center-43.0-2.fc37.x86_64.rpm from Releases page
+```
+# rpm --force -iv ./mutter-43.0-4.fc37.x86_64.rpm ./gnome-control-center-filesystem-43.0-2.fc37.noarch.rpm ./x86_64/gnome-control-center-43.0-2.fc37.x86_64.rpm
+# echo "exclude=mutter gnome-control-center-filesystem gnome-control-center" >> /etc/dnf/dnf.còn
+```

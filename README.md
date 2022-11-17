@@ -6,13 +6,15 @@ Xorg fractional scaling on Fedora Linux 37 and GNOME 43, patches taken from http
 
 ## How to use
 ```
-# dnf in -y rpm-build
+$ git clone https://github.com/th1nhhdk/fedora-gnome-xorg-fractional-scaling.git
+$ cd fedora-gnome-xorg-fractional-scaling
 $ cp -rv ./rpmbuild ~/
 $ cd ~/rpmbuild/SPECS/
+# dnf in -y rpm-build
 # dnf builddep mutter.spec gnome-control-center.spec
 $ rpmbuild --clean -ba mutter.spec
 $ rpmbuild --clean -ba gnome-control-center.spec
 $ cd ../RPMS/
-# rpm --force -iv ./x86_64/mutter-*.x86_64.rpm ./noarch/gnome-control-center-filesystem-*.noarch.rpm ./x86_64/gnome-control-center-*.x86_64.rpm
+# rpm --force -iv ./x86_64/mutter-43.0-4.fc37.x86_64.rpm ./noarch/gnome-control-center-filesystem-43.0-2.fc37.noarch.rpm ./x86_64/gnome-control-center-43.0-2.fc37.x86_64.rpm
 # echo "exclude=mutter gnome-control-center-filesystem gnome-control-center" >> /etc/dnf/dnf.conf
 ```

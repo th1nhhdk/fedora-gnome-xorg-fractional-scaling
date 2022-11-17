@@ -14,4 +14,5 @@ $ rpmbuild --clean -ba mutter.spec
 $ rpmbuild --clean -ba gnome-control-center.spec
 $ cd ../RPMS/
 # rpm --force -iv ./x86_64/mutter-*.x86_64.rpm ./noarch/gnome-control-center-filesystem-*.noarch.rpm ./x86_64/gnome-control-center-*.x86_64.rpm
+# echo "exclude=mutter gnome-control-center-filesystem gnome-control-center" >> /etc/dnf/dnf.conf
 ```
